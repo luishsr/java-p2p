@@ -6,6 +6,7 @@ import java.net.*;
 public class P2PDiscovery {
     private static final int PORT = 8888;
     private static final String DISCOVERY_MESSAGE = "P2P_DISCOVERY";
+    private static final String RESPONSE_MESSAGE = "P2P_RESPONSE";
 
     public static void main(String[] args) {
         try {
@@ -27,6 +28,17 @@ public class P2PDiscovery {
                             InetAddress clientAddress = receivePacket.getAddress();
                             int clientPort = receivePacket.getPort();
                             System.out.println("Received discovery request from " + clientAddress.getHostAddress());
+
+                            // Respond to the discovery request
+                            String responseMessage = "P2P_RESPONSE";
+                            byte[] responseData = responseMessage.getBytes();
+                            DatagramPacket responsePacket = new DatagramPacket(responseData, responseData.length,
+                                    clientAddress, clientPort);
+                            socket.send(responsePacket);
+                        } else if (message.equals(RESPONSE_MESSAGE)) {
+                            InetAddress clientAddress = receivePacket.getAddress();
+                            int clientPort = receivePacket.getPort();
+                            System.out.println("Received response back from " + clientAddress.getHostAddress());
 
                             // Respond to the discovery request
                             String responseMessage = "P2P_RESPONSE";
