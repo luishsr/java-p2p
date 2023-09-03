@@ -3,111 +3,119 @@ import java.io.*;
 import java.net.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class P2PProtocol {
-    private static final int DISCOVERY_PORT = 12345;
-    private static final int PEER_PORT = 54321;
-
-    private static List<PeerInfo> peers = new ArrayList<>();
+    private static final int PORT = 12345;
+    private static List<PeerInfo> peers = new CopyOnWriteArrayList<>();
 
     public static void main(String[] args) {
-        // Start a thread for peer discovery
-        Thread discoveryThread = new Thread(P2PProtocol::startPeerDiscovery);
-        discoveryThread.start();
-
-        // Start a thread for self-peer registration
-        Thread registrationThread = new Thread(P2PProtocol::registerSelf);
-        registrationThread.start();
-
-        // Start a thread to handle incoming connections
-        Thread serverThread = new Thread(P2PProtocol::startServer);
-        serverThread.start();
-    }
-
-    private static void startPeerDiscovery() {
         try {
-            DatagramSocket socket = new DatagramSocket(DISCOVERY_PORT);
+            // Create a socket for listening to incoming connections
+            ServerSocket serverSocket = new ServerSocket(PORT);
+            System.out.println("P2P server listening on port " + PORT);
 
-            while (true) {
-                byte[] receiveData = new byte[1024];
-                DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
-                socket.receive(receivePacket);
-
-                // Process the received data (e.g., extract peer information)
-                String peerInfo = new String(receivePacket.getData(), 0, receivePacket.getLength());
-                PeerInfo newPeer = new PeerInfo(receivePacket.getAddress(), PEER_PORT);
-
-                // Add the peer to the list if not already present
-                if (!peers.contains(newPeer)) {
-                    peers.add(newPeer);
-                    System.out.println("Discovered new peer: " + newPeer);
-                }
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private static void registerSelf() {
-        try {
-            DatagramSocket socket = new DatagramSocket();
-
-            // Register the local peer's information with the discovery service
-            String registrationMessage = "REGISTER " + InetAddress.getLocalHost().getHostAddress() + " " + PEER_PORT;
-            byte[] sendData = registrationMessage.getBytes();
-            DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length,
-                    InetAddress.getByName("localhost"), DISCOVERY_PORT);
-
-            socket.send(sendPacket);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private static void startServer() {
-        try {
-            ServerSocket serverSocket = new ServerSocket(PEER_PORT);
-            System.out.println("Listening for incoming connections on port " + PEER_PORT);
+            // Thread for handling peer discovery
+            Thread discoveryThread = new Thread(P2PProtocol::discoverPeers);
+            discoveryThread.start();
 
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                // Handle incoming connections (e.g., exchange data with other peers)
-                // Implement your logic for P2P communication here
+                Thread clientThread = new Thread(() -> handleClient(clientSocket));
+                clientThread.start();
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    static class PeerInfo {
-        InetAddress address;
-        int port;
+    private static void handleClient(Socket clientSocket) {
+        try {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+            BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(clientSocket.getOutputStream()));
 
-        public PeerInfo(InetAddress address, int port) {
-            this.address = address;
-            this.port = port;
+            String request = reader.readLine();
+            if (request != null) {
+                if (request.equals("LIST")) {
+                    // Respond with a list of registered peers
+                    String peerList = getRegisteredPeers();
+                    writer.write(peerList + "\n");
+                    writer.flush();
+                } else if (request.startsWith("REGISTER ")) {
+                    // Extract the peer's name
+                    String peerName = request.substring("REGISTER ".length());
+
+                    // Register the peer
+                    PeerInfo newPeer = new PeerInfo(peerName, clientSocket.getInetAddress().getHostAddress(), clientSocket.getPort());
+                    peers.add(newPeer);
+                    System.out.println("Peer registered: " + newPeer);
+
+                    // Respond with a confirmation message
+                    writer.write("REGISTERED\n");
+                    writer.flush();
+                }
+            }
+
+            clientSocket.close();
+        } catch (IOException e) {
+            e.printStackTrace();
         }
+    }
 
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-
-            PeerInfo peerInfo = (PeerInfo) o;
-
-            return port == peerInfo.port && address.equals(peerInfo.address);
+    private static String getRegisteredPeers() {
+        StringBuilder peerList = new StringBuilder();
+        for (PeerInfo peer : peers) {
+            peerList.append(peer.getName()).append(" (").append(peer.getIpAddress()).append(":").append(peer.getPort()).append(")\n");
         }
+        return peerList.toString();
+    }
 
-        @Override
-        public int hashCode() {
-            int result = address.hashCode();
-            result = 31 * result + port;
-            return result;
-        }
+    private static void discoverPeers() {
+        try {
+            DatagramSocket socket = new DatagramSocket();
+            socket.setBroadcast(true);
 
-        @Override
-        public String toString() {
-            return address.getHostAddress() + ":" + port;
+            while (true) {
+                // Broadcast a discovery message
+                String discoveryMessage = "DISCOVER P2P_PEERS";
+                byte[] sendData = discoveryMessage.getBytes();
+                InetAddress broadcastAddress = InetAddress.getByName("255.255.255.255");
+                DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, broadcastAddress, PORT);
+                socket.send(sendPacket);
+
+                Thread.sleep(5000); // Broadcast every 5 seconds
+            }
+        } catch (IOException | InterruptedException e) {
+            e.printStackTrace();
         }
+    }
+}
+
+class PeerInfo {
+    private String name;
+    private String ipAddress;
+    private int port;
+
+    public PeerInfo(String name, String ipAddress, int port) {
+        this.name = name;
+        this.ipAddress = ipAddress;
+        this.port = port;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public String getIpAddress() {
+        return ipAddress;
+    }
+
+    public int getPort() {
+        return port;
+    }
+
+    @Override
+    public String toString() {
+        return name + " (" + ipAddress + ":" + port + ")";
     }
 }
